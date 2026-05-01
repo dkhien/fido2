@@ -6,7 +6,6 @@ import com.dkhien.fido2.repository.UserRepository;
 import com.dkhien.fido2.services.Fido2RegistrationService;
 import com.webauthn4j.WebAuthnManager;
 import com.webauthn4j.converter.exception.DataConversionException;
-import com.webauthn4j.converter.util.ObjectConverter;
 import com.webauthn4j.data.*;
 import com.webauthn4j.data.attestation.statement.COSEAlgorithmIdentifier;
 import com.webauthn4j.data.client.Origin;
@@ -30,8 +29,7 @@ import java.util.List;
 public class Fido2RegistrationServiceImpl implements Fido2RegistrationService {
 
     private final UserRepository userRepository;
-    private final ObjectConverter objectConverter;
-    private final WebAuthnManager webAuthnManager;
+    private final WebAuthnManager webAuthnManager = WebAuthnManager.createNonStrictWebAuthnManager();
 
     @Override
     public PublicKeyCredentialCreationOptions getRegistrationOptions(PostRegistrationOptionsRequest request, HttpSession session) {
@@ -57,7 +55,7 @@ public class Fido2RegistrationServiceImpl implements Fido2RegistrationService {
             timeout, excludeCredentials, authSelectionCriteria, hints, attestation, attestationFormats, extensions
         );
 
-        log.info("[Register/Options] Response - {}", objectConverter.getJsonMapper().writeValueAsString(options));
+        log.info("[Register/Options] Response - {}", options);
         return options;
     }
 
@@ -65,7 +63,7 @@ public class Fido2RegistrationServiceImpl implements Fido2RegistrationService {
     public Boolean verifyRegistration(PostRegistrationVerifyRequest request, HttpSession session) {
         log.info("[Register/Verify] Request - username={}", request.username());
 
-        String responseJson = objectConverter.getJsonMapper().writeValueAsString(request.response());
+        String responseJson = request.response().toString();
         log.info("[Register/Verify] Credential JSON - {}", responseJson);
 
         Challenge challenge = (Challenge) session.getAttribute("fido2_registration_challenge");
@@ -101,6 +99,8 @@ public class Fido2RegistrationServiceImpl implements Fido2RegistrationService {
 
         try {
             webAuthnManager.verify(registrationData, registrationParameters);
+
+            // TODO: Verify credential ID hasn't existed in repository
             log.info("[Register/Verify] Verification successful - username={}", request.username());
             return true;
         } catch (VerificationException e) {
@@ -182,7 +182,7 @@ public class Fido2RegistrationServiceImpl implements Fido2RegistrationService {
 
     private List<PublicKeyCredentialDescriptor> buildExcludeCredentials() {
         // Currently left empty, check later
-        // TODO
+        // TODO: Make a credential repository and add list of existing cred IDs to exclude
         return List.of();
     }
 
