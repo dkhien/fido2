@@ -57,7 +57,7 @@ public class Fido2RegistrationServiceImpl implements Fido2RegistrationService {
             timeout, excludeCredentials, authSelectionCriteria, hints, attestation, attestationFormats, extensions
         );
 
-        log.info("[Register/Options] Response - {}", objectConverter.getJsonConverter().writeValueAsString(options));
+        log.info("[Register/Options] Response - {}", objectConverter.getJsonMapper().writeValueAsString(options));
         return options;
     }
 
