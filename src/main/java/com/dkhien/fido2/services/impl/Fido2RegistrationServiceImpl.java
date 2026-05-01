@@ -18,10 +18,13 @@ import com.webauthn4j.server.ServerProperty;
 import com.webauthn4j.verifier.exception.VerificationException;
 import jakarta.servlet.http.HttpSession;
 import lombok.RequiredArgsConstructor;
+import lombok.extern.slf4j.Slf4j;
 import org.springframework.stereotype.Service;
 
+import java.util.Base64;
 import java.util.List;
 
+@Slf4j
 @Service
 @RequiredArgsConstructor
 public class Fido2RegistrationServiceImpl implements Fido2RegistrationService {
@@ -32,6 +35,8 @@ public class Fido2RegistrationServiceImpl implements Fido2RegistrationService {
 
     @Override
     public PublicKeyCredentialCreationOptions getRegistrationOptions(PostRegistrationOptionsRequest request, HttpSession session) {
+        log.info("[Register/Options] Request - {}", request);
+
         String username = request.username();
 
         PublicKeyCredentialRpEntity rp = buildRp();
@@ -47,21 +52,25 @@ public class Fido2RegistrationServiceImpl implements Fido2RegistrationService {
         List<String> attestationFormats = buildAttestationFormats();
         AuthenticationExtensionsClientInputs<RegistrationExtensionClientInput> extensions = buildExtensions();
 
-        return new PublicKeyCredentialCreationOptions(
-            // Mandatory fields
+        PublicKeyCredentialCreationOptions options = new PublicKeyCredentialCreationOptions(
             rp, userEntity, challenge, pubKeyCredParams,
-
-            // Optional fields
             timeout, excludeCredentials, authSelectionCriteria, hints, attestation, attestationFormats, extensions
         );
+
+        log.info("[Register/Options] Response - {}", objectConverter.getJsonConverter().writeValueAsString(options));
+        return options;
     }
 
     @Override
     public Boolean verifyRegistration(PostRegistrationVerifyRequest request, HttpSession session) {
+        log.info("[Register/Verify] Request - username={}", request.username());
+
         String responseJson = objectConverter.getJsonMapper().writeValueAsString(request.response());
+        log.info("[Register/Verify] Credential JSON - {}", responseJson);
 
         Challenge challenge = (Challenge) session.getAttribute("fido2_registration_challenge");
         session.removeAttribute("fido2_registration_challenge");
+        log.info("[Register/Verify] Challenge retrieved from session - challengeFound={}", challenge != null);
 
         // Server properties
         Origin origin = Origin.create("http://localhost:5173");
@@ -80,16 +89,55 @@ public class Fido2RegistrationServiceImpl implements Fido2RegistrationService {
         RegistrationParameters registrationParameters =
                 new RegistrationParameters(serverProperty, pubKeyCredParams, userVerificationRequired, userPresenceRequired);
 
+        RegistrationData registrationData;
         try {
-            webAuthnManager.verifyRegistrationResponseJSON(responseJson, registrationParameters);
-        }
-        catch (DataConversionException e) {
+            registrationData = webAuthnManager.parseRegistrationResponseJSON(responseJson);
+        } catch (DataConversionException e) {
+            log.error("[Register/Verify] Data conversion failed - {}", e.getMessage());
             throw e;
-        } catch (VerificationException e) {
-            return false;
         }
 
-        return true;
+        logParsedRegistrationData(registrationData);
+
+        try {
+            webAuthnManager.verify(registrationData, registrationParameters);
+            log.info("[Register/Verify] Verification successful - username={}", request.username());
+            return true;
+        } catch (VerificationException e) {
+            log.warn("[Register/Verify] Verification failed - {}", e.getMessage());
+            return false;
+        }
+    }
+
+    private void logParsedRegistrationData(RegistrationData data) {
+        var clientData = data.getCollectedClientData();
+        if (clientData != null) {
+            log.info("[Register/Verify] ClientData - type={} origin={} crossOrigin={} challenge={}",
+                    clientData.getType(),
+                    clientData.getOrigin(),
+                    clientData.getCrossOrigin(),
+                    Base64.getUrlEncoder().withoutPadding().encodeToString(clientData.getChallenge().getValue()));
+        }
+
+        var authData = data.getAttestationObject() != null
+                ? data.getAttestationObject().getAuthenticatorData()
+                : null;
+        if (authData != null) {
+            log.info("[Register/Verify] AuthData - flagUP={} flagUV={} flagBE={} flagBS={} signCount={}",
+                    authData.isFlagUP(),
+                    authData.isFlagUV(),
+                    authData.isFlagBE(),
+                    authData.isFlagBS(),
+                    authData.getSignCount());
+
+            var credData = authData.getAttestedCredentialData();
+            if (credData != null) {
+                log.info("[Register/Verify] AttestedCredentialData - aaguid={} credentialId={} keyAlgorithm={}",
+                        credData.getAaguid(),
+                        Base64.getUrlEncoder().withoutPadding().encodeToString(credData.getCredentialId()),
+                        credData.getCOSEKey().getAlgorithm());
+            }
+        }
     }
 
     private PublicKeyCredentialRpEntity buildRp() {
