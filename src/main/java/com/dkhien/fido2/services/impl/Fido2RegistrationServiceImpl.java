@@ -6,6 +6,7 @@ import com.dkhien.fido2.repository.UserRepository;
 import com.dkhien.fido2.services.Fido2RegistrationService;
 import com.webauthn4j.WebAuthnManager;
 import com.webauthn4j.converter.exception.DataConversionException;
+import com.webauthn4j.converter.util.ObjectConverter;
 import com.webauthn4j.data.*;
 import com.webauthn4j.data.attestation.statement.COSEAlgorithmIdentifier;
 import com.webauthn4j.data.client.Origin;
@@ -15,9 +16,9 @@ import com.webauthn4j.data.extension.client.AuthenticationExtensionsClientInputs
 import com.webauthn4j.data.extension.client.RegistrationExtensionClientInput;
 import com.webauthn4j.server.ServerProperty;
 import com.webauthn4j.verifier.exception.VerificationException;
+import jakarta.servlet.http.HttpSession;
 import lombok.RequiredArgsConstructor;
 import org.springframework.stereotype.Service;
-import tools.jackson.databind.ObjectMapper;
 
 import java.util.List;
 
@@ -26,16 +27,17 @@ import java.util.List;
 public class Fido2RegistrationServiceImpl implements Fido2RegistrationService {
 
     private final UserRepository userRepository;
-    private final ObjectMapper objectMapper;
-    private final WebAuthnManager webAuthnManager = WebAuthnManager.createNonStrictWebAuthnManager();
+    private final ObjectConverter objectConverter;
+    private final WebAuthnManager webAuthnManager;
 
     @Override
-    public PublicKeyCredentialCreationOptions getRegistrationOptions(PostRegistrationOptionsRequest request) {
+    public PublicKeyCredentialCreationOptions getRegistrationOptions(PostRegistrationOptionsRequest request, HttpSession session) {
         String username = request.username();
 
         PublicKeyCredentialRpEntity rp = buildRp();
         PublicKeyCredentialUserEntity userEntity = buildUserEntity(username);
         Challenge challenge = buildChallenge();
+        session.setAttribute("fido2_registration_challenge", challenge);
         List<PublicKeyCredentialParameters> pubKeyCredParams = buildPubKeyCredParams();
         Long timeout = 60000L;
         List<PublicKeyCredentialDescriptor> excludeCredentials = buildExcludeCredentials();
@@ -55,13 +57,15 @@ public class Fido2RegistrationServiceImpl implements Fido2RegistrationService {
     }
 
     @Override
-    public Boolean verifyRegistration(PostRegistrationVerifyRequest request) {
-        String responseJson = objectMapper.writeValueAsString(request.response());
+    public Boolean verifyRegistration(PostRegistrationVerifyRequest request, HttpSession session) {
+        String responseJson = objectConverter.getJsonMapper().writeValueAsString(request.response());
+
+        Challenge challenge = (Challenge) session.getAttribute("fido2_registration_challenge");
+        session.removeAttribute("fido2_registration_challenge");
 
         // Server properties
         Origin origin = Origin.create("http://localhost:5173");
-        String rpId = "rpId";
-        Challenge challenge = new DefaultChallenge("challenge");
+        String rpId = "localhost";
         ServerProperty serverProperty = ServerProperty.builder()
                 .origin(origin)
                 .rpId(rpId)
@@ -89,8 +93,8 @@ public class Fido2RegistrationServiceImpl implements Fido2RegistrationService {
     }
 
     private PublicKeyCredentialRpEntity buildRp() {
-        String rpId = "rpId";
-        String rpName = "rpName";
+        String rpId = "localhost";
+        String rpName = "FIDO2 Demo";
         return new PublicKeyCredentialRpEntity(rpId, rpName);
     }
 
@@ -100,8 +104,7 @@ public class Fido2RegistrationServiceImpl implements Fido2RegistrationService {
     }
 
     private Challenge buildChallenge() {
-        // TODO: Dynamic challenge, stored in session
-        return new DefaultChallenge("challenge");
+        return new DefaultChallenge();
     }
 
     private List<PublicKeyCredentialParameters> buildPubKeyCredParams() {
