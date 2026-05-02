@@ -2,10 +2,15 @@ package com.dkhien.fido2.services.impl;
 
 import com.dkhien.fido2.dto.request.PostRegistrationOptionsRequest;
 import com.dkhien.fido2.dto.request.PostRegistrationVerifyRequest;
-import com.dkhien.fido2.repository.UserRepository;
+import com.dkhien.fido2.entity.CredentialEntity;
+import com.dkhien.fido2.entity.UserEntity;
+import com.dkhien.fido2.repository.CredentialJpaRepository;
+import com.dkhien.fido2.repository.UserJpaRepository;
 import com.dkhien.fido2.services.Fido2RegistrationService;
 import com.webauthn4j.WebAuthnManager;
 import com.webauthn4j.converter.exception.DataConversionException;
+import com.webauthn4j.converter.util.ObjectConverter;
+import com.webauthn4j.credential.CredentialRecordImpl;
 import com.webauthn4j.data.*;
 import com.webauthn4j.data.attestation.statement.COSEAlgorithmIdentifier;
 import com.webauthn4j.data.client.Origin;
@@ -19,17 +24,21 @@ import jakarta.servlet.http.HttpSession;
 import lombok.RequiredArgsConstructor;
 import lombok.extern.slf4j.Slf4j;
 import org.springframework.stereotype.Service;
+import org.springframework.transaction.annotation.Transactional;
 
 import java.util.Base64;
 import java.util.List;
+import java.util.UUID;
 
 @Slf4j
 @Service
 @RequiredArgsConstructor
 public class Fido2RegistrationServiceImpl implements Fido2RegistrationService {
 
-    private final UserRepository userRepository;
+    private final UserJpaRepository userJpaRepository;
+    private final CredentialJpaRepository credentialJpaRepository;
     private final WebAuthnManager webAuthnManager = WebAuthnManager.createNonStrictWebAuthnManager();
+    private final ObjectConverter objectConverter = new ObjectConverter();
 
     @Override
     public PublicKeyCredentialCreationOptions getRegistrationOptions(PostRegistrationOptionsRequest request, HttpSession session) {
@@ -60,6 +69,7 @@ public class Fido2RegistrationServiceImpl implements Fido2RegistrationService {
     }
 
     @Override
+    @Transactional
     public Boolean verifyRegistration(PostRegistrationVerifyRequest request, HttpSession session) {
         log.info("[Register/Verify] Request - username={}", request.username());
 
@@ -100,13 +110,35 @@ public class Fido2RegistrationServiceImpl implements Fido2RegistrationService {
         try {
             webAuthnManager.verify(registrationData, registrationParameters);
 
-            // TODO: Verify credential ID hasn't existed in repository
+            saveCredential(request.username(), registrationData);
             log.info("[Register/Verify] Verification successful - username={}", request.username());
             return true;
         } catch (VerificationException e) {
             log.warn("[Register/Verify] Verification failed - {}", e.getMessage());
             return false;
         }
+    }
+
+    private void saveCredential(String username, RegistrationData registrationData) {
+        UserEntity user = userJpaRepository.findByUsername(username)
+                .orElseThrow(() -> new RuntimeException("User not found: " + username));
+
+        byte[] credentialIdBytes = registrationData.getAttestationObject()
+                .getAuthenticatorData()
+                .getAttestedCredentialData()
+                .getCredentialId();
+        String credentialId = Base64.getUrlEncoder().withoutPadding().encodeToString(credentialIdBytes);
+
+        CredentialRecordImpl credentialRecord = new CredentialRecordImpl(
+                registrationData.getAttestationObject(),
+                registrationData.getCollectedClientData(),
+                registrationData.getClientExtensions(),
+                registrationData.getTransports()
+        );
+
+        byte[] credentialRecordBytes = objectConverter.getCborMapper().writeValueAsBytes(credentialRecord);
+        credentialJpaRepository.save(new CredentialEntity(credentialId, credentialRecordBytes, user));
+        log.info("[Register/Verify] Credential saved - credentialId={}", credentialId);
     }
 
     private void logParsedRegistrationData(RegistrationData data) {
@@ -147,7 +179,11 @@ public class Fido2RegistrationServiceImpl implements Fido2RegistrationService {
     }
 
     private PublicKeyCredentialUserEntity buildUserEntity(String username) {
-        String id = userRepository.saveUser(username);
+        if (userJpaRepository.existsByUsername(username)) {
+            throw new RuntimeException("Username already exists: " + username);
+        }
+        String id = UUID.randomUUID().toString();
+        userJpaRepository.save(new UserEntity(id, username));
         return new PublicKeyCredentialUserEntity(id.getBytes(), username, username);
     }
 
