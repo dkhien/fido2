@@ -10,7 +10,6 @@ import com.dkhien.fido2.services.Fido2RegistrationService;
 import com.webauthn4j.WebAuthnManager;
 import com.webauthn4j.converter.exception.DataConversionException;
 import com.webauthn4j.converter.util.ObjectConverter;
-import com.webauthn4j.credential.CredentialRecordImpl;
 import com.webauthn4j.data.*;
 import com.webauthn4j.data.attestation.statement.COSEAlgorithmIdentifier;
 import com.webauthn4j.data.client.Origin;
@@ -129,15 +128,10 @@ public class Fido2RegistrationServiceImpl implements Fido2RegistrationService {
                 .getCredentialId();
         String credentialId = Base64.getUrlEncoder().withoutPadding().encodeToString(credentialIdBytes);
 
-        CredentialRecordImpl credentialRecord = new CredentialRecordImpl(
-                registrationData.getAttestationObject(),
-                registrationData.getCollectedClientData(),
-                registrationData.getClientExtensions(),
-                registrationData.getTransports()
-        );
-
-        byte[] credentialRecordBytes = objectConverter.getCborMapper().writeValueAsBytes(credentialRecord);
-        credentialJpaRepository.save(new CredentialEntity(credentialId, credentialRecordBytes, user));
+        // Store raw attestationObjectBytes — webauthn4j's CBOR mapper can deserialize AttestationObject
+        // directly from these, whereas CredentialRecordImpl has no registered CBOR deserializer
+        byte[] attestationObjectBytes = registrationData.getAttestationObjectBytes();
+        credentialJpaRepository.save(new CredentialEntity(credentialId, attestationObjectBytes, user));
         log.info("[Register/Verify] Credential saved - credentialId={}", credentialId);
     }
 
