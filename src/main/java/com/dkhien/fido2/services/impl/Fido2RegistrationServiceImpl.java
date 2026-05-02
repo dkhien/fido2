@@ -52,7 +52,7 @@ public class Fido2RegistrationServiceImpl implements Fido2RegistrationService {
         session.setAttribute("fido2_registration_challenge", challenge);
         List<PublicKeyCredentialParameters> pubKeyCredParams = buildPubKeyCredParams();
         Long timeout = 60000L;
-        List<PublicKeyCredentialDescriptor> excludeCredentials = buildExcludeCredentials();
+        List<PublicKeyCredentialDescriptor> excludeCredentials = buildExcludeCredentials(username);
         AuthenticatorSelectionCriteria authSelectionCriteria = buildAuthSelectionCriteria();
         List<PublicKeyCredentialHints> hints = buildHints();
         AttestationConveyancePreference attestation = buildAttestation();
@@ -216,10 +216,13 @@ public class Fido2RegistrationServiceImpl implements Fido2RegistrationService {
         );
     }
 
-    private List<PublicKeyCredentialDescriptor> buildExcludeCredentials() {
-        // Currently left empty, check later
-        // TODO: Make a credential repository and add list of existing cred IDs to exclude
-        return List.of();
+    private List<PublicKeyCredentialDescriptor> buildExcludeCredentials(String username) {
+        return credentialJpaRepository.findByUserUsername(username).stream()
+                .map(credential -> {
+                    byte[] credentialIdBytes = Base64.getUrlDecoder().decode(credential.getCredentialId());
+                    return new PublicKeyCredentialDescriptor(PublicKeyCredentialType.PUBLIC_KEY, credentialIdBytes, null);
+                })
+                .toList();
     }
 
     private List<PublicKeyCredentialHints> buildHints() {
